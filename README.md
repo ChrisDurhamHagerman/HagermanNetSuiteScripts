@@ -1,7 +1,7 @@
 # HagermanNetSuiteScripts
 This is where all the scripts created for NetSuite will live.
-[ng_ue_quote_Documentation.docx](https://github.com/user-attachments/files/22434416/ng_ue_quote_Documentation.docx)
-[ng_sl_status_update_webhook_Documentation.docx](https://github.com/user-attachments/files/22434417/ng_sl_status_update_webhook_Documentation.docx)
+[ng_ue_quote_Documentation.docx](https://github.com/user-attachments/files/22434416/ng_ue_quote_Documentation.docx) /n
+[ng_sl_status_update_webhook_Documentation.docx](https://github.com/user-attachments/files/22434417/ng_sl_status_update_webhook_Documentation.docx) /n
 [ng_sl_autodesk_tasks_Documentation.docx](https://github.com/user-attachments/files/22434418/ng_sl_autodesk_tasks_Documentation.docx)
 [ng_cm_quote_Documentation.docx](https://github.com/user-attachments/files/22434420/ng_cm_quote_Documentation.docx)
 [import_csv_to_netsuite_Documentation.docx](https://github.com/user-attachments/files/22434422/import_csv_to_netsuite_Documentation.docx)
