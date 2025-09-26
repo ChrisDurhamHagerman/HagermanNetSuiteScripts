@@ -39,8 +39,8 @@ define(['N/search', 'N/log', 'N/https'], function (search, log, https) {
 
             // Step 4: Send JSON data to API
             var response = https.post({
-                url: 'https://ns-autodesk.hagerman.com:44306/api/CsvImport/import', // Update with your actual endpoint
-                body: JSON.stringify(jsonData), // Convert JSON object to string
+                url: 'https://ns-autodesk.hagerman.com:44306/api/CsvImport/import', 
+                body: JSON.stringify(jsonData), 
                 headers: {
                     'Content-Type': 'application/json'
                 }
