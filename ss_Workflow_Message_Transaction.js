@@ -9,7 +9,7 @@ define(['N/search', 'N/log', 'N/https'], function (search, log, https) {
         try {
             // 1) Load the saved search
             var mySearch = search.load({
-                id: 'customsearch3499'
+                id: 'customsearch5833'
             });
 
             // 2) Run and gather all results (1000 per page)
