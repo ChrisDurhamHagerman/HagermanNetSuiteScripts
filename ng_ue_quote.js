@@ -130,6 +130,11 @@ define(['N/record', 'N/runtime'],
                         fieldId: 'custbody_hco_hubspot_opp_total',
                         value: totalAmount
                     });
+
+                    oppRecord.setValue({
+                        fieldId: 'custbody_custentity_ss_sync_to_hubspot',
+                        value: true
+                    });
         
                     oppRecord.save();
                     log.debug('Opportunity updated', `Set custbody_hco_hubspot_opp_total to ${totalAmount}`);

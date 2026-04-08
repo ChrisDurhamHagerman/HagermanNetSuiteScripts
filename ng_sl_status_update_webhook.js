@@ -115,80 +115,85 @@ define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/en
                             scriptContext.response.write({ output: 'POST - Quote not found.' });
                         }
                     }
-                        else if (requestBody.topic === 'subscription-change') {
-                            const subscriptionId = requestBody.payload.subscriptionId;
-                            const subscriptionStatus = requestBody.payload.status;
-
-                            if (!subscriptionStatus) {
-                                log.error('Missing subscriptionStatus', `No status found for subscriptionId ${subscriptionId}. Aborting update.`);
-                                scriptContext.response.write({ output: `Missing status attribute for subscriptionId ${subscriptionId}.` });
-                                return;
-                            }
-                        
-                            log.audit('Subscription Change Received', `Subscription ID: ${subscriptionId}, Status: ${subscriptionStatus}`);
-                        
-                            // Search for sales orders with a line that matches this subscriptionId                            
-
-                            const salesOrderSearch = search.create({
-                                type: search.Type.TRANSACTION,
-                                filters: [
-                                    ['type', 'anyof', 'SalesOrd'],
-                                    'AND',
-                                    ['mainline', 'is', 'F'],
-                                    'AND',
-                                    ['custcol_hco_autodesk_subscription_id', 'is', subscriptionId]
-                                ],
-                                columns: ['internalid']
+                    else if (requestBody.topic === 'subscription-change') {
+                        const subscriptionId = requestBody.payload.subscriptionId;
+                        const subscriptionStatus = requestBody.payload.status;
+                    
+                        if (!subscriptionStatus) {
+                            log.error('Missing subscriptionStatus', `No status found for subscriptionId ${subscriptionId}. Aborting update.`);
+                            scriptContext.response.write({ output: `Missing status attribute for subscriptionId ${subscriptionId}.` });
+                            return;
+                        }
+                    
+                        log.audit('Subscription Change Received', `Subscription ID: ${subscriptionId}, Status: ${subscriptionStatus}`);
+                    
+                        const salesOrderSearch = search.create({
+                            type: search.Type.TRANSACTION,
+                            filters: [
+                                ['type', 'anyof', 'SalesOrd'],
+                                'AND',
+                                ['mainline', 'is', 'F'],
+                                'AND',
+                                ['custcol_hco_autodesk_subscription_id', 'is', subscriptionId]
+                            ],
+                            columns: [
+                                search.createColumn({
+                                    name: 'internalid',
+                                    sort: search.Sort.DESC
+                                })
+                            ]
+                        });
+                    
+                        log.debug('Searching for subscriptionId', JSON.stringify(subscriptionId));
+                    
+                        const results = salesOrderSearch.run().getRange({ start: 0, end: 1 });
+                    
+                        if (!results || results.length === 0) {
+                            log.audit('No Matching Sales Orders', `No sales orders found for Subscription ID: ${subscriptionId}`);
+                            scriptContext.response.write({ output: 'No matching sales orders found for subscription.' });
+                            return;
+                        }
+                    
+                        const salesOrderId = results[0].getValue({ name: 'internalid' });
+                    
+                        const so = record.load({
+                            type: record.Type.SALES_ORDER,
+                            id: salesOrderId,
+                            isDynamic: true
+                        });
+                    
+                        const lineCount = so.getLineCount({ sublistId: 'item' });
+                        let updated = false;
+                    
+                        for (let i = 0; i < lineCount; i++) {
+                            so.selectLine({ sublistId: 'item', line: i });
+                    
+                            const lineSubId = so.getCurrentSublistValue({
+                                sublistId: 'item',
+                                fieldId: 'custcol_hco_autodesk_subscription_id'
                             });
-                            
-                            log.debug('Searching for subscriptionId', JSON.stringify(subscriptionId));
-                        
-                            const updatedSalesOrders = new Set();
-                        
-                            salesOrderSearch.run().each(function (result) {
-                                const salesOrderId = result.getValue({ name: 'internalid' });
-                        
-                                const so = record.load({
-                                    type: record.Type.SALES_ORDER,
-                                    id: salesOrderId,
-                                    isDynamic: true
+                    
+                            if (lineSubId === subscriptionId) {
+                                so.setCurrentSublistValue({
+                                    sublistId: 'item',
+                                    fieldId: 'custcol_hco_autodesk_sub_status',
+                                    value: subscriptionStatus
                                 });
-                        
-                                const lineCount = so.getLineCount({ sublistId: 'item' });
-                        
-                                for (let i = 0; i < lineCount; i++) {
-                                    so.selectLine({ sublistId: 'item', line: i });
-                        
-                                    const lineSubId = so.getCurrentSublistValue({
-                                        sublistId: 'item',
-                                        fieldId: 'custcol_hco_autodesk_subscription_id'
-                                    });
-                        
-                                    if (lineSubId === subscriptionId) {
-                                        so.setCurrentSublistValue({
-                                            sublistId: 'item',
-                                            fieldId: 'custcol_hco_autodesk_sub_status',
-                                            value: subscriptionStatus
-                                        });
-                        
-                                        so.commitLine({ sublistId: 'item' });
-                                    }
-                                }
-                        
-                                const savedId = so.save();
-                                updatedSalesOrders.add(savedId);
-                                log.audit('Updated Sales Order', `ID: ${savedId} updated with new subscription status.`);
-                        
-                                return true; // continue search in case multiple SOs match
-                            });
-                        
-                            if (updatedSalesOrders.size > 0) {
-                                scriptContext.response.write({ output: `Updated ${updatedSalesOrders.size} sales order(s) with subscription status.` });
-                            } else {
-                                log.audit('No Matching Sales Orders', `No sales orders found for Subscription ID: ${subscriptionId}`);
-                                scriptContext.response.write({ output: 'No matching sales orders found for subscription.' });
+                    
+                                so.commitLine({ sublistId: 'item' });
+                                updated = true;
                             }
                         }
+                    
+                        if (updated) {
+                            const savedId = so.save();
+                            log.audit('Updated Sales Order', `ID: ${savedId} updated with new subscription status.`);
+                            scriptContext.response.write({ output: `Updated latest sales order (${savedId}) with subscription status.` });
+                        } else {
+                            log.audit('No Matching Lines', `Sales Order ${salesOrderId} had no matching lines for subscription ${subscriptionId}`);
+                            scriptContext.response.write({ output: 'No matching lines found on latest sales order.' });
+                        }
+                    }
                      
                         else {
                             const responseBody = JSON.parse(subscriptionStatusResponse.body || "{}");
@@ -210,7 +215,7 @@ define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/en
                                 scriptContext.response.write({ output: 'POST - Error retrieving subscription status.' });
                             }
                         }
-                    }
+                }
                     
                     
                     

@@ -32,10 +32,29 @@ define(['N/search','N/log'], (search, log) => {
     //   AND status anyof [...]
     //   AND companyname doesnotstartwith "test"
     const safeFilters = [
-      ['status','anyof','13','15','20','14','18','8','11','19','10'],
-      'AND',
-      ['companyname','doesnotstartwith','test']
+      [
+        [
+          "custentity_hco_creditsafe_id","isnotempty",""
+        ],
+        "OR",
+        [
+          "custentity_hco_creditsafe_credit_limit","greaterthan","0.00"
+        ],
+        "OR",
+        [
+          "custentity_hco_tc_effective_dso","isnotempty",""
+        ],
+        "OR",
+        [
+          "custentity_hco_tc_hco_credit_limit","isnotempty","0.00"
+        ]
+      ],
+      "AND",
+      ["status","anyof","13","15","20","14","18","8","11","19","10"],
+      "AND",
+      ["companyname","doesnotstartwith","test"]
     ];
+    
 
     // Safe native columns only (no custom columns)
     const columns = [
@@ -43,7 +62,7 @@ define(['N/search','N/log'], (search, log) => {
         search.createColumn({name: "entityid", label: "Customer"}),
         search.createColumn({name: "creditlimit", label: "Credit Limit"}),
         search.createColumn({name: "custentity_hco_creditsafe_id", label: "Credit Safe ID"}),
-        //search.createColumn({name: "custentity_hco_creditsafe_credit_limit", label: "Credit Safe Credit Limit"}),
+        search.createColumn({name: "custentity_hco_creditsafe_credit_limit", label: "Credit Safe Credit Limit"}),
         search.createColumn({name: "custentity_hco_creditsafe_refresh_flag", label: "Credit Safe Refresh Required"}),
         search.createColumn({name: "custentity_hco_tc_base_dep_level", label: "Base Deposit Level"}),
         search.createColumn({name: "custentity_hco_tc_effective_dep_level", label: "Effective Deposit Level"}),
