@@ -24,6 +24,14 @@ define(['N/record', 'N/runtime'],
                             fieldId: 'custbody_hco_adesk_quote_num'
                         });
 
+                        let opportunityNumber = quoteRec.getValue({
+                            fieldId: 'custbody_hco_opportunity_id'
+                        }) || '';
+
+                        let preparedBy = quoteRec.getValue({
+                            fieldId: 'custbody_hco_prepared_by'
+                        });
+
                         let finalizeDate = quoteRec.getValue({
                             fieldId: 'custbody_hco_adesk_quote_finalized'
                         });
@@ -33,7 +41,9 @@ define(['N/record', 'N/runtime'],
                         let proceed = false;
 
                         log.debug({title: 'Quote Number', details: quoteNumber});
+                        log.debug({title: 'Autodesk Opportunity Number', details: opportunityNumber});
                         log.debug({title: 'Transaction ID', details: internalid});
+                        log.debug({title: 'Prepared By', details: preparedBy});
 
                         let form = scriptContext.form;
                         let userRole = runtime.getCurrentUser().role;
@@ -45,9 +55,16 @@ define(['N/record', 'N/runtime'],
                                     label: 'Quote Details',
                                     functionName: `getQuoteDetails("${quoteNumber}", "${internalid}", "${proceed}")`
                             });
+
+                            if (opportunityNumber) {
+                                form.addButton({
+                                        id: 'custpage_get_renewal_details',
+                                        label: 'Get Renewal',
+                                        functionName: `getRenewalDetails("${opportunityNumber}", "${internalid}")`
+                                });
+                            }
                         }
 
-                        
                         form.addButton({
                             id: 'custpage_get_quote_details',
                             label: 'Finalize',

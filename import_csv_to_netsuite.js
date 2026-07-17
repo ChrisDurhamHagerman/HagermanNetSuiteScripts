@@ -32,7 +32,7 @@ define(['N/https', 'N/file', 'N/task', 'N/log'], function (https, file, task, lo
                 taskType: task.TaskType.CSV_IMPORT
             });
 
-            importTask.mappingId = 'custimport_398_290783_295'; // Your saved import ID
+            importTask.mappingId = 'custimport_398_290783_295_v2'; // Your saved import ID
             importTask.importFile = file.load({ id: fileId });
 
             var taskId = importTask.submit();
