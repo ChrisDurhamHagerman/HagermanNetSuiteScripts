@@ -24,6 +24,14 @@ define(['N/record', 'N/runtime'],
                             fieldId: 'custbody_hco_adesk_quote_num'
                         });
 
+                        let opportunityNumber = quoteRec.getValue({
+                            fieldId: 'custbody_hco_opportunity_id'
+                        }) || '';
+
+                        let preparedBy = quoteRec.getValue({
+                            fieldId: 'custbody_hco_prepared_by'
+                        });
+
                         let finalizeDate = quoteRec.getValue({
                             fieldId: 'custbody_hco_adesk_quote_finalized'
                         });
@@ -33,7 +41,9 @@ define(['N/record', 'N/runtime'],
                         let proceed = false;
 
                         log.debug({title: 'Quote Number', details: quoteNumber});
+                        log.debug({title: 'Autodesk Opportunity Number', details: opportunityNumber});
                         log.debug({title: 'Transaction ID', details: internalid});
+                        log.debug({title: 'Prepared By', details: preparedBy});
 
                         let form = scriptContext.form;
                         let userRole = runtime.getCurrentUser().role;
@@ -45,9 +55,16 @@ define(['N/record', 'N/runtime'],
                                     label: 'Quote Details',
                                     functionName: `getQuoteDetails("${quoteNumber}", "${internalid}", "${proceed}")`
                             });
+
+                            if (opportunityNumber) {
+                                form.addButton({
+                                        id: 'custpage_get_renewal_details',
+                                        label: 'Get Renewal',
+                                        functionName: `getRenewalDetails("${opportunityNumber}", "${internalid}")`
+                                });
+                            }
                         }
 
-                        
                         form.addButton({
                             id: 'custpage_get_quote_details',
                             label: 'Finalize',
@@ -70,6 +87,24 @@ define(['N/record', 'N/runtime'],
          * @since 2015.2
          */
         const beforeSubmit = (scriptContext) => {
+            if (scriptContext.type === scriptContext.UserEventType.DELETE) return;
+
+            const quoteRecord = scriptContext.newRecord;
+            const autodeskQuoteNumber = quoteRecord.getValue({
+                fieldId: 'custbody_hco_adesk_quote_num'
+            });
+
+            if (autodeskQuoteNumber) {
+                quoteRecord.setValue({
+                    fieldId: 'custbody_ava_disable_tax_calculation',
+                    value: true
+                });
+
+                log.debug('Avalara tax calculation disabled for Autodesk quote', {
+                    quoteId: quoteRecord.id,
+                    autodeskQuoteNumber: autodeskQuoteNumber
+                });
+            }
 
         }
 
@@ -119,8 +154,12 @@ define(['N/record', 'N/runtime'],
                 const opportunityId = fullQuote.getValue({
                     fieldId: 'opportunity'
                 });
+
+                const quoteStatus = fullQuote.getValue({
+                    fieldId: 'custbody_hco_quote_status'
+                });
         
-                if (opportunityId) {
+                if (opportunityId && quoteStatus == 6) {
                     const oppRecord = record.load({
                         type: record.Type.OPPORTUNITY,
                         id: opportunityId
@@ -138,6 +177,8 @@ define(['N/record', 'N/runtime'],
         
                     oppRecord.save();
                     log.debug('Opportunity updated', `Set custbody_hco_hubspot_opp_total to ${totalAmount}`);
+                } else if (opportunityId) {
+                    log.debug('Opportunity update skipped', `Quote status ${quoteStatus} is not Completed.`);
                 } else {
                     log.debug('No opportunity linked to this quote.');
                 }

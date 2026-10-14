@@ -4,8 +4,8 @@
  */
 define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/format'], function(search,https,record,crypto,encode,dialog,format) {
 
-    const consumerKey = "1InXy1oxJJbZNxCsgg44lDYJkdeejZyx";
-    const consumerSecret = "i1RgQeFweXJqemF6";
+    const consumerKey = "VfqFUv1FAYFfwY9AuSh45w0uS8ue9VlEHV8MOaBU6HHNrHGf"; 
+    const consumerSecret = "5Ga80A5nwkxROrFmKOCGjcMtAGpYZrHoO9GU1ZRKLl6I4KVgjDF1CuiDm9dKgMyl";
     const callbackUrl = "www.test.com";
     const environmentUrl = "enterprise-api.autodesk.com";
     const csn = "0070000545"
@@ -14,7 +14,7 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
     const sKey = crypto.createSecretKey({
         secret: mySecret,
         encoding: encode.Encoding.UTF_8
-    })
+    });
 
     function onRequest(context) {
        
@@ -32,8 +32,20 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
                 let internalId = params.internalid;
                 log.debug('Internal ID',internalId);
 
+                log.debug('Quote Details Starting Avalara Disable', {
+                    quoteNumber: quoteNumber,
+                    internalId: internalId
+                });
+
+                disableAvalaraTaxCalculation(internalId);
+
+                log.debug('Quote Details Avalara Disable Complete', {
+                    quoteNumber: quoteNumber,
+                    internalId: internalId
+                });
+
                 var response = getQuoteDetails(quoteNumber, internalId, context);
-                log.debug('Post-GetQuoteDetails', response.body);
+                logLargeValue('Post-GetQuoteDetails', response.body || response);
 
                 context.response.write(response);
 
@@ -41,6 +53,44 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
                 //responseObj.success = true;
                 //responseObj.message = 'Process completed successfully.';
                 //context.response.write(JSON.stringify(responseObj))
+
+            }else if(action == 'getOpportunityDetails'){
+
+                let opportunityNumber = params.opportunityNumber;
+                log.debug('Opportunity Number', opportunityNumber);
+
+                let internalId = params.internalid;
+                log.debug('Internal ID', internalId);
+
+                try {
+                    var renewalResponse = getOpportunityDetails(opportunityNumber, internalId);
+                    context.response.write(JSON.stringify(renewalResponse));
+                } catch (e) {
+                    log.error('Get Opportunity Details Error', e);
+                    context.response.write(JSON.stringify({
+                        success: false,
+                        message: e.message
+                    }));
+                }
+
+            }else if(action == 'createQuoteFromOpportunity'){
+
+                let opportunityNumber = params.opportunityNumber;
+                log.debug('Opportunity Number', opportunityNumber);
+
+                let internalId = params.internalid;
+                log.debug('Internal ID', internalId);
+
+                try {
+                    var renewalQuoteResponse = createQuoteFromOpportunity(opportunityNumber, internalId);
+                    context.response.write(JSON.stringify(renewalQuoteResponse));
+                } catch (e) {
+                    log.error('Create Quote From Opportunity Error', e);
+                    context.response.write(JSON.stringify({
+                        success: false,
+                        message: e.message
+                    }));
+                }
 
             }else if(action == 'finalize'){
 
@@ -72,6 +122,31 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
         } 
     }
 
+    function disableAvalaraTaxCalculation(internalId) {
+        log.debug('Submitting Avalara Disable Flag', {
+            internalId: internalId,
+            fieldId: 'custbody_ava_disable_tax_calculation',
+            value: true
+        });
+
+        var savedQuoteId = record.submitFields({
+            type: record.Type.ESTIMATE,
+            id: internalId,
+            values: {
+                custbody_ava_disable_tax_calculation: true
+            },
+            options: {
+                enableSourcing: false,
+                ignoreMandatoryFields: true
+            }
+        });
+
+        log.debug('Avalara Tax Calculation Disabled', {
+            internalId: internalId,
+            savedQuoteId: savedQuoteId
+        });
+    }
+
     function getQuoteDetails(quoteNumber, internalId, context) {
         var accessToken = getAccessToken();
         var headers = createAuthenticatedHeaders(accessToken);
@@ -83,7 +158,7 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
             headers: headers
         });
     
-        log.debug('Quote API Response', response.body);
+        logLargeValue('Quote API Response', response.body);
     
         // Check if account is government
         isGovernment = getAccounts(response);
@@ -119,7 +194,7 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
         headers['CSN'] = csn;
     
         var quoteData = JSON.parse(quoteResponse.body);
-        log.debug('Parsed Quote Response', quoteData);
+        logLargeValue('Parsed Quote Response', quoteData);
     
         var partnerCSN = quoteData[0]?.endCustomer?.accountCsn;
         log.debug('Extracted partnerCSN', partnerCSN);
@@ -140,6 +215,86 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
         log.debug('Final Determination of Government Status', isGovernment);
     
         return isGovernment;
+    }
+
+    function getOpportunityDetails(opportunityNumber, internalId) {
+        log.debug('Starting GetOpportunityDetails', {
+            opportunityNumber: opportunityNumber,
+            internalId: internalId,
+            partnerCsn: csn
+        });
+
+        var opportunityDetail = fetchOpportunityDetail(opportunityNumber);
+        var lineItemsResponse = getOpportunityLineItems(opportunityDetail, internalId, opportunityNumber);
+
+        return {
+            success: true,
+            data: lineItemsResponse
+        };
+    }
+
+    function createQuoteFromOpportunity(opportunityNumber, internalId) {
+        log.debug('Starting CreateQuoteFromOpportunity', {
+            opportunityNumber: opportunityNumber,
+            internalId: internalId,
+            partnerCsn: csn
+        });
+
+        var accessToken = getAccessToken();
+        var headers = createAuthenticatedHeaders(accessToken);
+        headers['CSN'] = csn;
+
+        var opportunityDetail = fetchOpportunityDetail(opportunityNumber);
+        var payload = buildAsIsRenewalPayload(opportunityNumber, opportunityDetail, internalId);
+        log.debug('Create Quote Payload', JSON.stringify(payload));
+
+        var response = https.post({
+            url: 'https://' + environmentUrl + '/v3/quotes',
+            body: JSON.stringify(payload),
+            headers: headers
+        });
+
+        log.debug('Create Quote Response Code', response.code);
+        log.debug('Create Quote Response Body', response.body);
+
+        if (response.code !== 200 && response.code !== 201 && response.code !== 202) {
+            throw new Error('Failed to create Autodesk quote from opportunity: ' + response.body);
+        }
+
+        var quoteNumber = extractQuoteNumber(response.body);
+        if (!quoteNumber) {
+            var parsedCreateResponse = JSON.parse(response.body);
+            if (response.code === 202 && parsedCreateResponse.message === 'success') {
+                if (parsedCreateResponse.transactionId) {
+                    saveAutodeskTransactionId(internalId, parsedCreateResponse.transactionId);
+                }
+
+                return {
+                    success: false,
+                    accepted: true,
+                    transactionId: parsedCreateResponse.transactionId || null,
+                    message: 'Autodesk accepted the create quote request, but did not return a quote number yet.'
+                };
+            }
+
+            throw new Error('Autodesk create quote response did not include a quote number.');
+        }
+
+        saveAutodeskQuoteNumber(internalId, quoteNumber);
+
+        var quoteResponse = getQuoteDetails(quoteNumber, internalId, {
+            request: {
+                parameters: {}
+            }
+        });
+
+        var parsedQuoteResponse = JSON.parse(quoteResponse);
+
+        return {
+            success: true,
+            quoteNumber: quoteNumber,
+            data: parsedQuoteResponse.data
+        };
     }
 
     function finalizeQuote(quoteNumber, internalId) {
@@ -233,12 +388,436 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
          }
     }
 
+    function getOpportunityLineItems(opportunityDetail, internalid, opportunityNumber) {
+        log.debug('Processing Opportunity Detail', {
+            opportunityNumber: opportunityNumber,
+            internalId: internalid,
+            responseOpportunityNumber: opportunityDetail.opportunity_number,
+            lineItemCount: opportunityDetail.line_items ? opportunityDetail.line_items.length : 0
+        });
+
+        if (opportunityDetail.line_items && Array.isArray(opportunityDetail.line_items) && opportunityDetail.line_items.length > 0) {
+            var itemDetails = [];
+
+            opportunityDetail.line_items.forEach(function(item, index) {
+                log.debug('Raw Opportunity Line Item', {
+                    lineNumber: index + 1,
+                    renewalSku: item.renewal_sku,
+                    quantity: item.quantity,
+                    serialNumber: item.serial_number,
+                    status: item.status,
+                    renew: item.renew
+                });
+
+                itemDetails.push({
+                    renewalSku: item.renewal_sku,
+                    skuDescription: item.sku_description,
+                    quantity: item.quantity,
+                    seats: item.seats,
+                    renewedQuantity: item.renewed_quantity,
+                    deployment: item.deployment,
+                    status: item.status,
+                    assetStatus: item.asset_status,
+                    supportProgram: item.support_program,
+                    programEligibility: item.program_eligibility,
+                    renew: item.renew,
+                    serialNumber: item.serial_number,
+                    subscriptionEndDate: opportunityDetail.subscription_end_date,
+                    contractTerm: opportunityDetail.contract ? opportunityDetail.contract.contract_term : null,
+                    contractDuration: opportunityDetail.contract ? opportunityDetail.contract.contract_duration : null,
+                    contractNumber: opportunityDetail.contract ? opportunityDetail.contract.contract_number : null,
+                    renewOnlineEligibility: opportunityDetail.renew_online_eligibility,
+                    opportunityNumber: opportunityDetail.opportunity_number || opportunityNumber,
+                    lineNumber: index + 1
+                });
+            });
+
+            updateQuoteWithOpportunityLineItems(internalid, itemDetails);
+            return itemDetails;
+        }
+
+        throw new Error('No renewal line items were returned for Autodesk opportunity ID ' + opportunityNumber + '.');
+    }
+
+    function fetchOpportunityDetail(opportunityNumber) {
+        var accessToken = getAccessToken();
+        var headers = createAuthenticatedHeaders(accessToken);
+        headers['CSN'] = csn;
+
+        var response = https.get({
+            url: 'https://' + environmentUrl + '/v2/opportunities?partnerCsn=' + encodeURIComponent(csn) + '&opportunityNumber=' + encodeURIComponent(opportunityNumber),
+            headers: headers
+        });
+
+        log.debug('Opportunity API Response', response.body);
+        log.debug('Opportunity API Response Code', response.code);
+
+        if (response.code !== 200) {
+            throw new Error('Failed to retrieve Autodesk renewal opportunity: ' + response.body);
+        }
+
+        var parsedResponse = JSON.parse(response.body);
+        log.debug('Parsed Opportunity Response', parsedResponse);
+
+        if (parsedResponse.status && parsedResponse.status !== 'OK') {
+            var errorMessage = parsedResponse.error && parsedResponse.error.message ? parsedResponse.error.message : 'Unknown Autodesk opportunity error.';
+            throw new Error(errorMessage);
+        }
+
+        if (!Array.isArray(parsedResponse.results) || parsedResponse.results.length === 0) {
+            throw new Error('No Autodesk opportunity was found for opportunity ID ' + opportunityNumber + '.');
+        }
+
+        return parsedResponse.results[0];
+    }
+
+    function buildAsIsRenewalPayload(opportunityNumber, opportunityDetail, internalId) {
+        var endCustomerAccount = opportunityDetail.endCustomer && opportunityDetail.endCustomer.account
+            ? opportunityDetail.endCustomer.account
+            : {};
+        var purchaser = opportunityDetail.endCustomer && opportunityDetail.endCustomer.purchaser
+            ? opportunityDetail.endCustomer.purchaser
+            : {};
+        var preparedByEmail = getPreparedByEmail(internalId);
+
+        var quoteContact = {
+            firstName: purchaser.firstName || 'Renewal',
+            lastName: purchaser.lastName || 'Contact',
+            email: purchaser.email || agentEmail,
+            preferredLanguage: derivePreferredLanguage(endCustomerAccount.countryCode, endCustomerAccount.country)
+        };
+
+        if (endCustomerAccount.phone) {
+            quoteContact.phone = endCustomerAccount.phone;
+        }
+
+        var payload = {
+            opportunityNumber: opportunityNumber,
+            currency: opportunityDetail.opportunityCurrency || 'USD',
+            endCustomer: {
+                accountCsn: endCustomerAccount.csn,
+                name: endCustomerAccount.name,
+                addressLine1: endCustomerAccount.addressLine1,
+                addressLine2: endCustomerAccount.addressLine2,
+                addressLine3: endCustomerAccount.addressLine3,
+                city: endCustomerAccount.city,
+                countryCode: endCustomerAccount.countryCode,
+                postalCode: endCustomerAccount.postal
+            },
+            quoteContact: quoteContact,
+            agentAccount: {
+                accountCsn: csn
+            },
+            agentContact: {
+                email: preparedByEmail
+            }
+        };
+
+        var additionalRecipients = getAdditionalRecipients(internalId, quoteContact.email);
+        if (additionalRecipients.length > 0) {
+            payload.additionalRecipients = additionalRecipients;
+        }
+
+        log.debug('As-Is Renewal Additional Recipients', additionalRecipients);
+
+        return payload;
+    }
+
+    function getPreparedByEmail(internalId) {
+        var quoteRecord = record.load({
+            type: record.Type.ESTIMATE,
+            id: internalId,
+            isDynamic: false
+        });
+
+        var preparedById = quoteRecord.getValue({
+            fieldId: 'custbody_hco_prepared_by'
+        });
+
+        log.debug('Prepared By Employee', {
+            internalId: internalId,
+            preparedById: preparedById
+        });
+
+        if (!preparedById) {
+            throw new Error('Prepared By is required on the quote before Get Renewal can create the Autodesk quote.');
+        }
+
+        var employeeFields = search.lookupFields({
+            type: search.Type.EMPLOYEE,
+            id: preparedById,
+            columns: ['email']
+        });
+
+        log.debug('Prepared By Email Lookup', employeeFields);
+
+        if (!employeeFields.email) {
+            throw new Error('The Prepared By employee does not have an email address in NetSuite.');
+        }
+
+        return employeeFields.email;
+    }
+
+    function getInsideSalesRepEmail(quoteRecord) {
+        var insideSalesRepId = quoteRecord.getValue({
+            fieldId: 'custbody_hco_inside_sales_rep'
+        });
+
+        log.debug('Inside Sales Rep Employee', {
+            quoteId: quoteRecord.id,
+            insideSalesRepId: insideSalesRepId
+        });
+
+        if (!insideSalesRepId) {
+            return '';
+        }
+
+        var employeeFields = search.lookupFields({
+            type: search.Type.EMPLOYEE,
+            id: insideSalesRepId,
+            columns: ['email']
+        });
+
+        log.debug('Inside Sales Rep Email Lookup', employeeFields);
+
+        if (!employeeFields.email) {
+            throw new Error('The Inside Sales Rep employee does not have an email address in NetSuite.');
+        }
+
+        return employeeFields.email;
+    }
+
+    function getPrimaryContactEmail(quoteRecord) {
+        var primaryContactId = quoteRecord.getValue({
+            fieldId: 'custbody_hco_prim_contact_trans'
+        });
+
+        log.debug('Primary Contact', {
+            quoteId: quoteRecord.id,
+            primaryContactId: primaryContactId
+        });
+
+        if (!primaryContactId) {
+            return '';
+        }
+
+        var contactFields = search.lookupFields({
+            type: search.Type.CONTACT,
+            id: primaryContactId,
+            columns: ['email']
+        });
+
+        log.debug('Primary Contact Email Lookup', contactFields);
+
+        if (!contactFields.email) {
+            throw new Error('The Primary Contact does not have an email address in NetSuite.');
+        }
+
+        return contactFields.email;
+    }
+
+    function addAdditionalRecipient(recipients, uniqueEmails, recipientEmail, sourceLabel) {
+        var trimmedEmail = (recipientEmail || '').trim();
+        var normalizedEmail = trimmedEmail.toLowerCase();
+        var emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+        if (!trimmedEmail) {
+            return;
+        }
+
+        if (!emailPattern.test(trimmedEmail)) {
+            throw new Error('Invalid additional recipient email from ' + sourceLabel + ': ' + trimmedEmail);
+        }
+
+        if (uniqueEmails[normalizedEmail]) {
+            log.debug('Skipping Duplicate Autodesk Quote Recipient', {
+                source: sourceLabel,
+                email: trimmedEmail
+            });
+            return;
+        }
+
+        uniqueEmails[normalizedEmail] = true;
+        recipients.push({
+            email: trimmedEmail
+        });
+    }
+
+    function getAdditionalRecipients(internalId, quoteContactEmail) {
+        var quoteRecord = record.load({
+            type: record.Type.ESTIMATE,
+            id: internalId,
+            isDynamic: false
+        });
+
+        var uniqueEmails = {};
+        var recipients = [];
+        var quoteContactEmailNormalized = (quoteContactEmail || '').toLowerCase().trim();
+
+        if (quoteContactEmailNormalized) {
+            uniqueEmails[quoteContactEmailNormalized] = true;
+        }
+
+        addAdditionalRecipient(
+            recipients,
+            uniqueEmails,
+            getInsideSalesRepEmail(quoteRecord),
+            'Inside Sales Rep'
+        );
+
+        addAdditionalRecipient(
+            recipients,
+            uniqueEmails,
+            getPrimaryContactEmail(quoteRecord),
+            'Primary Contact'
+        );
+
+        [
+            {
+                fieldId: 'custbody_hco_addl_email_1',
+                label: 'Additional Email 1'
+            },
+            {
+                fieldId: 'custbody_hco_addl_email_2',
+                label: 'Additional Email 2'
+            },
+            {
+                fieldId: 'custbody_hco_addl_email_3',
+                label: 'Additional Email 3'
+            }
+        ].forEach(function(emailField) {
+            addAdditionalRecipient(
+                recipients,
+                uniqueEmails,
+                quoteRecord.getValue({
+                    fieldId: emailField.fieldId
+                }),
+                emailField.label
+            );
+        });
+
+        if (recipients.length > 4) {
+            throw new Error('There are more than 5 email recipients on the Autodesk quote, which is not allowed. Reduce the email recipients and try again.');
+        }
+
+        return recipients;
+    }
+
+    function extractQuoteNumber(responseBody) {
+        var parsedBody = JSON.parse(responseBody);
+        log.debug('Parsed Create Quote Response', parsedBody);
+
+        if (parsedBody.quoteNumber) {
+            return parsedBody.quoteNumber;
+        }
+
+        if (parsedBody.quote && parsedBody.quote.quoteNumber) {
+            return parsedBody.quote.quoteNumber;
+        }
+
+        if (Array.isArray(parsedBody) && parsedBody.length > 0 && parsedBody[0].quoteNumber) {
+            return parsedBody[0].quoteNumber;
+        }
+
+        if (parsedBody.data && parsedBody.data.quoteNumber) {
+            return parsedBody.data.quoteNumber;
+        }
+
+        return null;
+    }
+
+    function saveAutodeskQuoteNumber(internalId, quoteNumber) {
+        log.debug('Saving Autodesk Quote Number To NetSuite Quote', {
+            internalId: internalId,
+            quoteNumber: quoteNumber
+        });
+
+        var quoteRecord = record.load({
+            type: record.Type.ESTIMATE,
+            id: internalId,
+            isDynamic: true
+        });
+
+        quoteRecord.setValue({
+            fieldId: 'custbody_hco_adesk_quote_num',
+            value: quoteNumber
+        });
+
+        var savedId = quoteRecord.save();
+        log.debug('Autodesk Quote Number Saved', {
+            internalId: internalId,
+            savedId: savedId,
+            quoteNumber: quoteNumber
+        });
+    }
+
+    function saveAutodeskTransactionId(internalId, transactionId) {
+        log.debug('Saving Autodesk Transaction ID To NetSuite Quote', {
+            internalId: internalId,
+            transactionId: transactionId
+        });
+
+        var quoteRecord = record.load({
+            type: record.Type.ESTIMATE,
+            id: internalId,
+            isDynamic: true
+        });
+
+        quoteRecord.setValue({
+            fieldId: 'custbody_hco_adesk_transaction_id',
+            value: transactionId
+        });
+
+        var savedId = quoteRecord.save();
+        log.debug('Autodesk Transaction ID Saved', {
+            internalId: internalId,
+            savedId: savedId,
+            transactionId: transactionId
+        });
+    }
+
+    function derivePreferredLanguage(countryCode, countryName) {
+        var normalizedCountryCode = countryCode ? countryCode.toUpperCase() : '';
+        var normalizedCountryName = countryName ? countryName.toLowerCase() : '';
+
+        if (normalizedCountryCode === 'US' || normalizedCountryName === 'united states') {
+            return 'en';
+        }
+
+        if (normalizedCountryCode === 'AU' || normalizedCountryName === 'australia') {
+            return 'en';
+        }
+
+        if (normalizedCountryCode === 'GB' || normalizedCountryName === 'united kingdom') {
+            return 'en';
+        }
+
+        return 'en';
+    }
+
     function updateQuoteWithLineItems(internalid, lineItemsDetails) {
         try {
             var quoteRecord = record.load({
                 type: record.Type.ESTIMATE, // For quotes, the record type is usually 'estimate'
                 id: internalid,
                 isDynamic: true
+            });
+
+            log.debug('Quote Details Import Loaded Quote', {
+                internalId: internalid,
+                lineImportCount: lineItemsDetails.length
+            });
+
+            quoteRecord.setValue({
+                fieldId: 'custbody_ava_disable_tax_calculation',
+                value: true
+            });
+
+            log.debug('Quote Details Import Avalara Flag Set On Loaded Quote', {
+                internalId: internalid,
+                avalaraDisabled: quoteRecord.getValue({
+                    fieldId: 'custbody_ava_disable_tax_calculation'
+                })
             });
 
             //log.debug('Quote Record', quoteRecord);
@@ -360,6 +939,127 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
             dialog.alert({
                 title: 'Success',
                 message: 'Quote updated successfully with ID: ' + savedRecordId
+            });
+        } catch (error) {
+            dialog.alert({
+                title: 'Error updating quote',
+                message: error.message
+            });
+        }
+    }
+
+    function updateQuoteWithOpportunityLineItems(internalid, lineItemsDetails) {
+        try {
+            log.debug('Updating Quote With Opportunity Line Items', {
+                internalId: internalid,
+                lineCount: lineItemsDetails.length
+            });
+
+            var quoteRecord = record.load({
+                type: record.Type.ESTIMATE,
+                id: internalid,
+                isDynamic: true
+            });
+
+            for (var i = 0; i < lineItemsDetails.length; i++) {
+                var itemDetail = lineItemsDetails[i];
+
+                if (!itemDetail.renewalSku) {
+                    throw {message: 'Renewal SKU is missing for one or more Autodesk opportunity lines.'};
+                }
+
+                var itemFilters = [
+                    ["isinactive", "is", "F"],
+                    "AND",
+                    ["mpn", "is", itemDetail.renewalSku]
+                ];
+
+                var itemColumns = [
+                    search.createColumn({name: "internalid", label: "Internal ID"}),
+                    search.createColumn({name: "itemid", label: "Name"}),
+                    search.createColumn({name: "mpn", label: "Vendor Name"})
+                ];
+
+                var itemResult = getSearchResults('item', itemFilters, itemColumns);
+                log.debug('Renewal Item Search Result Count', {
+                    renewalSku: itemDetail.renewalSku,
+                    resultCount: itemResult.length
+                });
+
+                if (itemResult.length === 0) {
+                    throw {message: 'Item Not Found - ' + itemDetail.renewalSku};
+                }
+
+                var descriptionParts = [];
+                descriptionParts.push(itemDetail.skuDescription || itemDetail.renewalSku);
+
+                if (itemDetail.serialNumber) {
+                    descriptionParts.push('Serial Number# ' + itemDetail.serialNumber);
+                }
+
+                if (itemDetail.contractNumber) {
+                    descriptionParts.push('Contract# ' + itemDetail.contractNumber);
+                }
+
+                if (itemDetail.contractTerm || itemDetail.contractDuration) {
+                    descriptionParts.push([itemDetail.contractTerm, itemDetail.contractDuration].filter(Boolean).join(' - '));
+                }
+
+                if (itemDetail.subscriptionEndDate) {
+                    descriptionParts.push('Subscription End Date: ' + itemDetail.subscriptionEndDate);
+                }
+
+                if (itemDetail.supportProgram) {
+                    descriptionParts.push('Support Program: ' + itemDetail.supportProgram);
+                }
+
+                if (itemDetail.deployment) {
+                    descriptionParts.push('Deployment: ' + itemDetail.deployment);
+                }
+
+                if (itemDetail.status) {
+                    descriptionParts.push('Status: ' + itemDetail.status);
+                }
+
+                if (itemDetail.assetStatus) {
+                    descriptionParts.push('Asset Status: ' + itemDetail.assetStatus);
+                }
+
+                descriptionParts.push('NAD Eligible: ' + (itemDetail.programEligibility ? 'Yes' : 'No'));
+                descriptionParts.push('Renew Online Eligible: ' + (itemDetail.renewOnlineEligibility ? 'Yes' : 'No'));
+                descriptionParts.push('Renew: ' + (itemDetail.renew ? 'Yes' : 'No'));
+                descriptionParts.push('Autodesk Opportunity ID: ' + itemDetail.opportunityNumber);
+
+                var description = descriptionParts.join('\n');
+                var bonusType = 3;
+                var itemID = itemResult[0].getValue({name: 'internalid'});
+
+                log.debug('Adding Renewal Line To Quote', {
+                    quoteId: internalid,
+                    renewalSku: itemDetail.renewalSku,
+                    itemId: itemID,
+                    quantity: itemDetail.quantity,
+                    lineNumber: itemDetail.lineNumber
+                });
+
+                quoteRecord.selectNewLine({ sublistId: 'item' });
+                quoteRecord.setCurrentSublistValue({ sublistId: 'item', fieldId: 'item', value: itemID });
+                quoteRecord.setCurrentSublistValue({ sublistId: 'item', fieldId: 'quantity', value: itemDetail.quantity });
+                quoteRecord.setCurrentSublistValue({ sublistId: 'item', fieldId: 'description', value: description });
+                quoteRecord.setCurrentSublistValue({ sublistId: 'item', fieldId: 'department', value: bonusType });
+                quoteRecord.setCurrentSublistValue({ sublistId: 'item', fieldId: 'custcol_hco_adesk_line_num', value: itemDetail.lineNumber });
+                quoteRecord.commitLine({ sublistId: 'item' });
+            }
+
+            var savedRecordId = quoteRecord.save();
+            log.debug('Renewal Quote Saved', {
+                quoteId: savedRecordId,
+                sourceQuoteId: internalid,
+                importedLineCount: lineItemsDetails.length
+            });
+            dialog.alert({
+                title: 'Success',
+                message: 'Quote updated successfully with renewal items. Quote ID: ' + savedRecordId
             });
         } catch (error) {
             dialog.alert({
@@ -503,8 +1203,39 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
         return dateObject;
     }   
 
+    function logLargeValue(title, value) {
+        var chunkSize = 3000;
+        var text;
+
+        if (typeof value === 'string') {
+            text = value;
+        } else {
+            text = JSON.stringify(value);
+        }
+
+        if (!text) {
+            log.debug(title, text);
+            return;
+        }
+
+        var totalChunks = Math.ceil(text.length / chunkSize);
+        log.debug(title + ' Summary', {
+            length: text.length,
+            chunks: totalChunks
+        });
+
+        for (var i = 0; i < totalChunks; i++) {
+            log.debug(title + ' Chunk ' + (i + 1) + ' of ' + totalChunks, text.substring(i * chunkSize, (i + 1) * chunkSize));
+        }
+    }
+
     return {
         onRequest: onRequest
     };
 
 });
+
+
+
+
+

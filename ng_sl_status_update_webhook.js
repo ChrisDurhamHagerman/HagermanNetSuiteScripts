@@ -2,10 +2,10 @@
  * @NApiVersion 2.1
  * @NScriptType Suitelet
  */
-define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/encode','N/ui/dialog', 'N/format'], function(record, search, email, log, https, crypto, encode, dialog, format) { 
+define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/encode','N/ui/dialog', 'N/format', 'N/url', 'N/runtime'], function(record, search, email, log, https, crypto, encode, dialog, format, url, runtime) { 
 
-    const consumerKey = "1InXy1oxJJbZNxCsgg44lDYJkdeejZyx";
-    const consumerSecret = "i1RgQeFweXJqemF6";
+    const consumerKey = "VfqFUv1FAYFfwY9AuSh45w0uS8ue9VlEHV8MOaBU6HHNrHGf"; 
+    const consumerSecret = "5Ga80A5nwkxROrFmKOCGjcMtAGpYZrHoO9GU1ZRKLl6I4KVgjDF1CuiDm9dKgMyl";
     const callbackUrl = "www.test.com";
     const environmentUrl = "enterprise-api.autodesk.com";
     const csn = "0070000545"
@@ -31,30 +31,21 @@ define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/en
 
                     if (requestBody.topic === 'quote-status' && requestBody.event === 'changed') {
                         const quoteNumber = payload.quoteNumber;
+                        const transactionId = payload.transactionId;
                         const quoteStatus = payload.quoteStatus;
                         const message = payload.message;
                         const modifiedAt = payload.modifiedAt;
+                        const quoteErrors = payload.errors || [];
 
                         log.debug('Quote Number', quoteNumber);
+                        log.debug('Transaction ID', transactionId);
                         log.debug('Quote Status', quoteStatus);
                                                 
 
-                        // Search for the quote using the quote number
-                        const quoteSearch = search.create({
-                            type: search.Type.ESTIMATE,
-                            filters: [
-                                ['custbody_hco_adesk_quote_num', 'is', quoteNumber]
-                            ],
-                            columns: ['internalid']
-                        });
-
                         log.debug('Message', message);
+                        log.debug('Quote Errors', JSON.stringify(quoteErrors));
 
-                        let quoteId;
-                        quoteSearch.run().each(function(result) {
-                            quoteId = result.getValue('internalid');
-                            return false; // Exit the loop after the first result
-                        });
+                        let quoteId = findQuoteId(quoteNumber, transactionId);
 
                         log.audit('Modified At', modifiedAt);
                         log.debug('QuoteId', quoteId)
@@ -72,6 +63,20 @@ define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/en
                                 fieldId: 'custbody_hco_adesk_quote_status',
                                 value: quoteStatus
                             });
+
+                            if (transactionId) {
+                                quoteRecord.setValue({
+                                    fieldId: 'custbody_hco_adesk_transaction_id',
+                                    value: transactionId
+                                });
+                            }
+
+                            if (quoteNumber && quoteNumber !== 'NA') {
+                                quoteRecord.setValue({
+                                    fieldId: 'custbody_hco_adesk_quote_num',
+                                    value: quoteNumber
+                                });
+                            }
 
                             if (quoteStatus == 'Quoted') {
                                 var quoteDetails = getQuoteDetails(quoteNumber);
@@ -93,6 +98,10 @@ define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/en
                             // Save the quote record
                             const savedQuoteId = quoteRecord.save();
                             log.debug('Quote Saved', 'Quote ID: ' + savedQuoteId);
+
+                            if (quoteStatus == 'Quoted' && quoteNumber && quoteNumber !== 'NA') {
+                                triggerQuoteImport(quoteNumber, quoteId);
+                            }
 
                             // Log the message and modifiedAt
                             log.audit('Quote Update', 'Message: ' + message + ', Modified At: ' + modifiedAt);
@@ -116,12 +125,41 @@ define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/en
                         }
                     }
                     else if (requestBody.topic === 'subscription-change') {
-                        const subscriptionId = requestBody.payload.subscriptionId;
-                        const subscriptionStatus = requestBody.payload.status;
-                    
-                        if (!subscriptionStatus) {
-                            log.error('Missing subscriptionStatus', `No status found for subscriptionId ${subscriptionId}. Aborting update.`);
-                            scriptContext.response.write({ output: `Missing status attribute for subscriptionId ${subscriptionId}.` });
+                        const subscriptionId = payload.subscriptionId;
+                        const hasSubscriptionStatus = Object.prototype.hasOwnProperty.call(payload, 'status');
+                        const hasCancelAtRenewal = Object.prototype.hasOwnProperty.call(payload, 'cancelAtRenewal');
+                        const hasCancellationReason = Object.prototype.hasOwnProperty.call(payload, 'cancellationReason');
+                        const subscriptionStatus = payload.status;
+
+                        const subscriptionChangeLog = {
+                            webhookId: requestBody.id,
+                            event: requestBody.event,
+                            subscriptionId: subscriptionId,
+                            message: payload.message,
+                            modifiedAt: payload.modifiedAt,
+                            publishedAt: requestBody.publishedAt
+                        };
+
+                        if (hasSubscriptionStatus) {
+                            subscriptionChangeLog.status = subscriptionStatus;
+                        }
+
+                        if (hasCancelAtRenewal) {
+                            subscriptionChangeLog.cancelAtRenewal = payload.cancelAtRenewal;
+                        }
+
+                        if (hasCancellationReason) {
+                            subscriptionChangeLog.cancellationReason = payload.cancellationReason;
+                        }
+
+                        log.audit('Subscription Webhook Received', JSON.stringify(subscriptionChangeLog));
+
+                        if (!hasSubscriptionStatus || !subscriptionStatus) {
+                            log.audit(
+                                'Subscription Change Logged - No Status Update',
+                                `Subscription ID: ${subscriptionId}, Event: ${requestBody.event}, Message: ${payload.message || ''}`
+                            );
+                            scriptContext.response.write({ output: `Subscription change logged for ${subscriptionId}; no status update required.` });
                             return;
                         }
                     
@@ -194,27 +232,16 @@ define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/en
                             scriptContext.response.write({ output: 'No matching lines found on latest sales order.' });
                         }
                     }
-                     
-                        else {
-                            const responseBody = JSON.parse(subscriptionStatusResponse.body || "{}");
-                        
-                            // Check if the response contains the specific error code or message
-                            const error = responseBody.errors?.find(e => e.code === 4004 || e.message === "Invalid subscriptionId format");
-                            log.debug('Error Message', `Message: ${error.message}`);
-                            log.debug('Error Code', `Code: ${error.code}`);
-                        
-                            if (error) {
-                                log.error('Invalid Subscription ID Format', `Message: ${error.message}`);
-                                scriptContext.response.write({ output: 'POST - Invalid subscriptionId format. Aborting retry attempts.' });
-                        
-                                // Break out of the retry attempts
-                                recordHasChanged = false;
-                                retryCount = 50; // Exit the loop by reaching the max retry count
-                            } else {
-                                log.error('Failed to retrieve subscription status', subscriptionStatusResponse.body);
-                                scriptContext.response.write({ output: 'POST - Error retrieving subscription status.' });
-                            }
-                        }
+
+                    else {
+                        log.audit('Unhandled Webhook Topic', JSON.stringify({
+                            webhookId: requestBody.id,
+                            topic: requestBody.topic,
+                            event: requestBody.event
+                        }));
+                        scriptContext.response.write({ output: `POST - Webhook topic ${requestBody.topic || 'unknown'} is not handled.` });
+                        recordHasChanged = false;
+                    }
                 }
                     
                     
@@ -248,6 +275,69 @@ define(['N/record', 'N/search', 'N/email', 'N/log', 'N/https', 'N/crypto', 'N/en
         //log.debug('Response', response)
 
         return response;
+    }
+
+    function findQuoteId(quoteNumber, transactionId) {
+        let quoteId;
+        if (quoteNumber && quoteNumber !== 'NA') {
+            quoteId = searchQuoteId([
+                ['custbody_hco_adesk_quote_num', 'is', quoteNumber]
+            ]);
+        }
+
+        if (!quoteId && transactionId) {
+            quoteId = searchQuoteId([
+                ['custbody_hco_adesk_transaction_id', 'is', transactionId]
+            ]);
+        }
+
+        return quoteId;
+    }
+
+    function searchQuoteId(filters) {
+        const quoteSearch = search.create({
+            type: search.Type.ESTIMATE,
+            filters: filters,
+            columns: ['internalid']
+        });
+
+        let quoteId;
+        quoteSearch.run().each(function(result) {
+            quoteId = result.getValue('internalid');
+            return false;
+        });
+
+        return quoteId;
+    }
+
+    function triggerQuoteImport(quoteNumber, internalId) {
+        var urlDomain = url.resolveDomain({
+            hostType: url.HostType.APPLICATION,
+            accountId: runtime.accountId
+        });
+
+        var params = {
+            action: 'getDetails',
+            quoteNumber: quoteNumber,
+            internalid: internalId,
+            proceed: true
+        };
+
+        var scriptURL = url.resolveScript({
+            scriptId: 'customscript_ng_sl_autodesk_tasks',
+            deploymentId: 'customdeploy_ng_sl_autodesk_tasks',
+            returnExternalUrl: false,
+            params: params
+        });
+
+        var fullScriptURL = 'https://' + urlDomain + scriptURL;
+        log.debug('Trigger Quote Import URL', fullScriptURL);
+
+        var importResponse = https.get({
+            url: fullScriptURL
+        });
+
+        log.debug('Trigger Quote Import Response', importResponse.body);
     }
 
     function getSubscriptionStatus(subscriptionId) {

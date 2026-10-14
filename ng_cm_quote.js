@@ -17,6 +17,25 @@ define(['N/record', 'N/https', 'N/ui/dialog','N/search','N/url','N/runtime'],
                             
         }
 
+        function getRenewalDetails(opportunityNumber, internalid) {
+            opportunityNumber = normalizeValue(opportunityNumber);
+
+            console.log('Get Renewal Clicked', {
+                opportunityNumber: opportunityNumber,
+                internalid: internalid
+            });
+
+            if (isEmpty(opportunityNumber)){
+                dialog.alert({
+                    title: 'Stopping Get Renewal',
+                    message: 'There is no Autodesk Opportunity ID on this Netsuite quote.'
+                });
+            }
+            else{
+                fetchRenewalDetails(opportunityNumber, internalid);
+            }
+        }
+
         function finalizeQuote(quoteNumber, internalid, finalizeDate) {   
             if (isEmpty(quoteNumber)){
                 dialog.alert({
@@ -107,7 +126,19 @@ define(['N/record', 'N/https', 'N/ui/dialog','N/search','N/url','N/runtime'],
             var fullScriptURL = `https://${urlDomain}${scriptURL}`;
             console.log('Full Script URL:', fullScriptURL);
         
-            https.get.promise({ url: fullScriptURL })
+            console.log('Quote Details starting Avalara disable before Suitelet call.', {
+                quoteNumber: quoteNumber,
+                internalid: internalid
+            });
+
+            disableAvalaraTaxCalculation(internalid)
+                .then(function() {
+                    console.log('Avalara disable completed before Quote Details Suitelet call.', {
+                        quoteNumber: quoteNumber,
+                        internalid: internalid
+                    });
+                    return https.get.promise({ url: fullScriptURL });
+                })
                 .then(function(response) {
                     console.log("Suitelet Response Body:", response.body);
                     
@@ -137,6 +168,66 @@ define(['N/record', 'N/https', 'N/ui/dialog','N/search','N/url','N/runtime'],
                 })
                 .catch(function(error) {
                     console.error("Error fetching quote details:", error);
+                    dialog.alert({
+                        title: 'Get Quote Details Failed',
+                        message: error.message || error
+                    });
+                });
+        }
+
+        function fetchRenewalDetails(opportunityNumber, internalid) {
+            var urlDomain = url.resolveDomain({
+                hostType: url.HostType.APPLICATION,
+                accountId: runtime.accountId
+            });
+
+            var params = {
+                action: 'createQuoteFromOpportunity',
+                opportunityNumber: opportunityNumber,
+                internalid: internalid
+            };
+
+            var scriptURL = url.resolveScript({
+                scriptId: 'customscript_ng_sl_autodesk_tasks',
+                deploymentId: 'customdeploy_ng_sl_autodesk_tasks',
+                returnExternalUrl: false,
+                params: params
+            });
+
+            var fullScriptURL = `https://${urlDomain}${scriptURL}`;
+            console.log('Full Script URL:', fullScriptURL);
+
+            https.get.promise({ url: fullScriptURL })
+                .then(function(response) {
+                    console.log("Renewal Response Body:", response.body);
+                    var responseData = JSON.parse(response.body);
+                    console.log('Parsed Renewal Response:', responseData);
+                    if (responseData.accepted === true) {
+                        dialog.alert({
+                            title: 'Get Renewal Submitted',
+                            message: responseData.message || 'Autodesk accepted the create quote request.'
+                        }).then(function() {
+                            location.replace(location.href);
+                        });
+                        return;
+                    }
+
+                    if (responseData.success === false) {
+                        dialog.alert({
+                            title: 'Get Renewal Failed',
+                            message: responseData.message || 'Unable to retrieve Autodesk renewal details.'
+                        });
+                        return;
+                    }
+
+                    if (responseData.quoteNumber) {
+                        console.log('Created Autodesk Quote Number:', responseData.quoteNumber);
+                    }
+
+                    location.replace(location.href);
+                })
+                .catch(function(error) {
+                    console.error("Error fetching renewal details:", error);
                 });
         }
         
@@ -167,14 +258,56 @@ define(['N/record', 'N/https', 'N/ui/dialog','N/search','N/url','N/runtime'],
             var fullScriptURL = `https://${urlDomain}${scriptURL}`;
             console.log('Full Script URL:', fullScriptURL);
         
-            https.get.promise({ url: fullScriptURL })
+            console.log('Forced Quote Details starting Avalara disable before Suitelet call.', {
+                quoteNumber: quoteNumber,
+                internalid: internalid
+            });
+
+            disableAvalaraTaxCalculation(internalid)
+                .then(function() {
+                    console.log('Avalara disable completed before forced Quote Details Suitelet call.', {
+                        quoteNumber: quoteNumber,
+                        internalid: internalid
+                    });
+                    return https.get.promise({ url: fullScriptURL });
+                })
                 .then(function(response) {
                     console.log("Proceeding with government account:", response.body);
                     location.replace(location.href);
                 })
                 .catch(function(error) {
                     console.error("Error fetching quote details after confirmation:", error);
+                    dialog.alert({
+                        title: 'Get Quote Details Failed',
+                        message: error.message || error
+                    });
                 });
+        }
+
+        function disableAvalaraTaxCalculation(internalid) {
+            console.log('Submitting Avalara disable flag from client script.', {
+                internalid: internalid,
+                fieldId: 'custbody_ava_disable_tax_calculation',
+                value: true
+            });
+
+            return record.submitFields.promise({
+                type: record.Type.ESTIMATE,
+                id: internalid,
+                values: {
+                    custbody_ava_disable_tax_calculation: true
+                },
+                options: {
+                    enableSourcing: false,
+                    ignoreMandatoryFields: true
+                }
+            }).then(function(id) {
+                console.log('Avalara tax calculation disabled from client script.', {
+                    submittedId: id,
+                    internalid: internalid
+                });
+                return id;
+            });
         }
         
         
@@ -191,8 +324,21 @@ define(['N/record', 'N/https', 'N/ui/dialog','N/search','N/url','N/runtime'],
             }
         }
 
+        function normalizeValue(value) {
+            if (value === undefined || value === null) {
+                return '';
+            }
+
+            if (typeof value === 'string' && value.toLowerCase() === 'undefined') {
+                return '';
+            }
+
+            return value;
+        }
+
         return {
             getQuoteDetails: getQuoteDetails,
+            getRenewalDetails: getRenewalDetails,
             finalizeQuote: finalizeQuote
         };
     });
