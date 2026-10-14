@@ -16,11 +16,21 @@ define(['N/https', 'N/file', 'N/task', 'N/log'], function (https, file, task, lo
                 throw 'Download failed: HTTP ' + response.code;
             }
 
+            var csvContents = response.body || '';
+            csvContents = csvContents.replace(/^\uFEFF/, '');
+
+            var headerLine = csvContents.split(/\r?\n/)[0] || '';
+            log.debug('CSV Header', headerLine);
+
+            if (!/(^|,)("?)(InternalID|id|externalid|tranid)\2(,|$)/i.test(headerLine)) {
+                throw 'CSV missing Sales Order identifier column. Header: ' + headerLine;
+            }
+
             //Step 2: Save the CSV file in the NetSuite file cabinet
             var csvFile = file.create({
                 name: 'NetsuiteImportData.csv',
                 fileType: file.Type.CSV,
-                contents: response.body,
+                contents: csvContents,
                 folder: 14337963 // Replace with your actual folder ID
             });
 

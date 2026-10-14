@@ -7,7 +7,7 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
     const consumerKey = "VfqFUv1FAYFfwY9AuSh45w0uS8ue9VlEHV8MOaBU6HHNrHGf"; 
     const consumerSecret = "5Ga80A5nwkxROrFmKOCGjcMtAGpYZrHoO9GU1ZRKLl6I4KVgjDF1CuiDm9dKgMyl";
     const callbackUrl = "www.test.com";
-    const environmentUrl = "enterprise-api-stg.autodesk.com";
+    const environmentUrl = "enterprise-api.autodesk.com";
     const csn = "0070000545"
     const agentEmail = 'chrisdurham@hagerman.com';
     const mySecret = 'custsecret_hco_autodesk_api_26';
@@ -32,8 +32,20 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
                 let internalId = params.internalid;
                 log.debug('Internal ID',internalId);
 
+                log.debug('Quote Details Starting Avalara Disable', {
+                    quoteNumber: quoteNumber,
+                    internalId: internalId
+                });
+
+                disableAvalaraTaxCalculation(internalId);
+
+                log.debug('Quote Details Avalara Disable Complete', {
+                    quoteNumber: quoteNumber,
+                    internalId: internalId
+                });
+
                 var response = getQuoteDetails(quoteNumber, internalId, context);
-                log.debug('Post-GetQuoteDetails', response.body);
+                logLargeValue('Post-GetQuoteDetails', response.body || response);
 
                 context.response.write(response);
 
@@ -110,6 +122,31 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
         } 
     }
 
+    function disableAvalaraTaxCalculation(internalId) {
+        log.debug('Submitting Avalara Disable Flag', {
+            internalId: internalId,
+            fieldId: 'custbody_ava_disable_tax_calculation',
+            value: true
+        });
+
+        var savedQuoteId = record.submitFields({
+            type: record.Type.ESTIMATE,
+            id: internalId,
+            values: {
+                custbody_ava_disable_tax_calculation: true
+            },
+            options: {
+                enableSourcing: false,
+                ignoreMandatoryFields: true
+            }
+        });
+
+        log.debug('Avalara Tax Calculation Disabled', {
+            internalId: internalId,
+            savedQuoteId: savedQuoteId
+        });
+    }
+
     function getQuoteDetails(quoteNumber, internalId, context) {
         var accessToken = getAccessToken();
         var headers = createAuthenticatedHeaders(accessToken);
@@ -121,7 +158,7 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
             headers: headers
         });
     
-        log.debug('Quote API Response', response.body);
+        logLargeValue('Quote API Response', response.body);
     
         // Check if account is government
         isGovernment = getAccounts(response);
@@ -157,7 +194,7 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
         headers['CSN'] = csn;
     
         var quoteData = JSON.parse(quoteResponse.body);
-        log.debug('Parsed Quote Response', quoteData);
+        logLargeValue('Parsed Quote Response', quoteData);
     
         var partnerCSN = quoteData[0]?.endCustomer?.accountCsn;
         log.debug('Extracted partnerCSN', partnerCSN);
@@ -454,8 +491,7 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
             quoteContact.phone = endCustomerAccount.phone;
         }
 
-        // Keep the opportunity-to-quote flow isolated from the existing quote-details import.
-        return {
+        var payload = {
             opportunityNumber: opportunityNumber,
             currency: opportunityDetail.opportunityCurrency || 'USD',
             endCustomer: {
@@ -476,6 +512,15 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
                 email: preparedByEmail
             }
         };
+
+        var additionalRecipients = getAdditionalRecipients(internalId, quoteContact.email);
+        if (additionalRecipients.length > 0) {
+            payload.additionalRecipients = additionalRecipients;
+        }
+
+        log.debug('As-Is Renewal Additional Recipients', additionalRecipients);
+
+        return payload;
     }
 
     function getPreparedByEmail(internalId) {
@@ -511,6 +556,151 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
         }
 
         return employeeFields.email;
+    }
+
+    function getInsideSalesRepEmail(quoteRecord) {
+        var insideSalesRepId = quoteRecord.getValue({
+            fieldId: 'custbody_hco_inside_sales_rep'
+        });
+
+        log.debug('Inside Sales Rep Employee', {
+            quoteId: quoteRecord.id,
+            insideSalesRepId: insideSalesRepId
+        });
+
+        if (!insideSalesRepId) {
+            return '';
+        }
+
+        var employeeFields = search.lookupFields({
+            type: search.Type.EMPLOYEE,
+            id: insideSalesRepId,
+            columns: ['email']
+        });
+
+        log.debug('Inside Sales Rep Email Lookup', employeeFields);
+
+        if (!employeeFields.email) {
+            throw new Error('The Inside Sales Rep employee does not have an email address in NetSuite.');
+        }
+
+        return employeeFields.email;
+    }
+
+    function getPrimaryContactEmail(quoteRecord) {
+        var primaryContactId = quoteRecord.getValue({
+            fieldId: 'custbody_hco_prim_contact_trans'
+        });
+
+        log.debug('Primary Contact', {
+            quoteId: quoteRecord.id,
+            primaryContactId: primaryContactId
+        });
+
+        if (!primaryContactId) {
+            return '';
+        }
+
+        var contactFields = search.lookupFields({
+            type: search.Type.CONTACT,
+            id: primaryContactId,
+            columns: ['email']
+        });
+
+        log.debug('Primary Contact Email Lookup', contactFields);
+
+        if (!contactFields.email) {
+            throw new Error('The Primary Contact does not have an email address in NetSuite.');
+        }
+
+        return contactFields.email;
+    }
+
+    function addAdditionalRecipient(recipients, uniqueEmails, recipientEmail, sourceLabel) {
+        var trimmedEmail = (recipientEmail || '').trim();
+        var normalizedEmail = trimmedEmail.toLowerCase();
+        var emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+        if (!trimmedEmail) {
+            return;
+        }
+
+        if (!emailPattern.test(trimmedEmail)) {
+            throw new Error('Invalid additional recipient email from ' + sourceLabel + ': ' + trimmedEmail);
+        }
+
+        if (uniqueEmails[normalizedEmail]) {
+            log.debug('Skipping Duplicate Autodesk Quote Recipient', {
+                source: sourceLabel,
+                email: trimmedEmail
+            });
+            return;
+        }
+
+        uniqueEmails[normalizedEmail] = true;
+        recipients.push({
+            email: trimmedEmail
+        });
+    }
+
+    function getAdditionalRecipients(internalId, quoteContactEmail) {
+        var quoteRecord = record.load({
+            type: record.Type.ESTIMATE,
+            id: internalId,
+            isDynamic: false
+        });
+
+        var uniqueEmails = {};
+        var recipients = [];
+        var quoteContactEmailNormalized = (quoteContactEmail || '').toLowerCase().trim();
+
+        if (quoteContactEmailNormalized) {
+            uniqueEmails[quoteContactEmailNormalized] = true;
+        }
+
+        addAdditionalRecipient(
+            recipients,
+            uniqueEmails,
+            getInsideSalesRepEmail(quoteRecord),
+            'Inside Sales Rep'
+        );
+
+        addAdditionalRecipient(
+            recipients,
+            uniqueEmails,
+            getPrimaryContactEmail(quoteRecord),
+            'Primary Contact'
+        );
+
+        [
+            {
+                fieldId: 'custbody_hco_addl_email_1',
+                label: 'Additional Email 1'
+            },
+            {
+                fieldId: 'custbody_hco_addl_email_2',
+                label: 'Additional Email 2'
+            },
+            {
+                fieldId: 'custbody_hco_addl_email_3',
+                label: 'Additional Email 3'
+            }
+        ].forEach(function(emailField) {
+            addAdditionalRecipient(
+                recipients,
+                uniqueEmails,
+                quoteRecord.getValue({
+                    fieldId: emailField.fieldId
+                }),
+                emailField.label
+            );
+        });
+
+        if (recipients.length > 4) {
+            throw new Error('There are more than 5 email recipients on the Autodesk quote, which is not allowed. Reduce the email recipients and try again.');
+        }
+
+        return recipients;
     }
 
     function extractQuoteNumber(responseBody) {
@@ -611,6 +801,23 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
                 type: record.Type.ESTIMATE, // For quotes, the record type is usually 'estimate'
                 id: internalid,
                 isDynamic: true
+            });
+
+            log.debug('Quote Details Import Loaded Quote', {
+                internalId: internalid,
+                lineImportCount: lineItemsDetails.length
+            });
+
+            quoteRecord.setValue({
+                fieldId: 'custbody_ava_disable_tax_calculation',
+                value: true
+            });
+
+            log.debug('Quote Details Import Avalara Flag Set On Loaded Quote', {
+                internalId: internalid,
+                avalaraDisabled: quoteRecord.getValue({
+                    fieldId: 'custbody_ava_disable_tax_calculation'
+                })
             });
 
             //log.debug('Quote Record', quoteRecord);
@@ -996,10 +1203,39 @@ define(['N/search','N/https','N/record','N/crypto','N/encode','N/ui/dialog', 'N/
         return dateObject;
     }   
 
+    function logLargeValue(title, value) {
+        var chunkSize = 3000;
+        var text;
+
+        if (typeof value === 'string') {
+            text = value;
+        } else {
+            text = JSON.stringify(value);
+        }
+
+        if (!text) {
+            log.debug(title, text);
+            return;
+        }
+
+        var totalChunks = Math.ceil(text.length / chunkSize);
+        log.debug(title + ' Summary', {
+            length: text.length,
+            chunks: totalChunks
+        });
+
+        for (var i = 0; i < totalChunks; i++) {
+            log.debug(title + ' Chunk ' + (i + 1) + ' of ' + totalChunks, text.substring(i * chunkSize, (i + 1) * chunkSize));
+        }
+    }
+
     return {
         onRequest: onRequest
     };
 
 });
+
+
+
 
 

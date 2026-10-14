@@ -126,7 +126,19 @@ define(['N/record', 'N/https', 'N/ui/dialog','N/search','N/url','N/runtime'],
             var fullScriptURL = `https://${urlDomain}${scriptURL}`;
             console.log('Full Script URL:', fullScriptURL);
         
-            https.get.promise({ url: fullScriptURL })
+            console.log('Quote Details starting Avalara disable before Suitelet call.', {
+                quoteNumber: quoteNumber,
+                internalid: internalid
+            });
+
+            disableAvalaraTaxCalculation(internalid)
+                .then(function() {
+                    console.log('Avalara disable completed before Quote Details Suitelet call.', {
+                        quoteNumber: quoteNumber,
+                        internalid: internalid
+                    });
+                    return https.get.promise({ url: fullScriptURL });
+                })
                 .then(function(response) {
                     console.log("Suitelet Response Body:", response.body);
                     
@@ -156,6 +168,10 @@ define(['N/record', 'N/https', 'N/ui/dialog','N/search','N/url','N/runtime'],
                 })
                 .catch(function(error) {
                     console.error("Error fetching quote details:", error);
+                    dialog.alert({
+                        title: 'Get Quote Details Failed',
+                        message: error.message || error
+                    });
                 });
         }
 
@@ -242,14 +258,56 @@ define(['N/record', 'N/https', 'N/ui/dialog','N/search','N/url','N/runtime'],
             var fullScriptURL = `https://${urlDomain}${scriptURL}`;
             console.log('Full Script URL:', fullScriptURL);
         
-            https.get.promise({ url: fullScriptURL })
+            console.log('Forced Quote Details starting Avalara disable before Suitelet call.', {
+                quoteNumber: quoteNumber,
+                internalid: internalid
+            });
+
+            disableAvalaraTaxCalculation(internalid)
+                .then(function() {
+                    console.log('Avalara disable completed before forced Quote Details Suitelet call.', {
+                        quoteNumber: quoteNumber,
+                        internalid: internalid
+                    });
+                    return https.get.promise({ url: fullScriptURL });
+                })
                 .then(function(response) {
                     console.log("Proceeding with government account:", response.body);
                     location.replace(location.href);
                 })
                 .catch(function(error) {
                     console.error("Error fetching quote details after confirmation:", error);
+                    dialog.alert({
+                        title: 'Get Quote Details Failed',
+                        message: error.message || error
+                    });
                 });
+        }
+
+        function disableAvalaraTaxCalculation(internalid) {
+            console.log('Submitting Avalara disable flag from client script.', {
+                internalid: internalid,
+                fieldId: 'custbody_ava_disable_tax_calculation',
+                value: true
+            });
+
+            return record.submitFields.promise({
+                type: record.Type.ESTIMATE,
+                id: internalid,
+                values: {
+                    custbody_ava_disable_tax_calculation: true
+                },
+                options: {
+                    enableSourcing: false,
+                    ignoreMandatoryFields: true
+                }
+            }).then(function(id) {
+                console.log('Avalara tax calculation disabled from client script.', {
+                    submittedId: id,
+                    internalid: internalid
+                });
+                return id;
+            });
         }
         
         

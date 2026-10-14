@@ -87,6 +87,24 @@ define(['N/record', 'N/runtime'],
          * @since 2015.2
          */
         const beforeSubmit = (scriptContext) => {
+            if (scriptContext.type === scriptContext.UserEventType.DELETE) return;
+
+            const quoteRecord = scriptContext.newRecord;
+            const autodeskQuoteNumber = quoteRecord.getValue({
+                fieldId: 'custbody_hco_adesk_quote_num'
+            });
+
+            if (autodeskQuoteNumber) {
+                quoteRecord.setValue({
+                    fieldId: 'custbody_ava_disable_tax_calculation',
+                    value: true
+                });
+
+                log.debug('Avalara tax calculation disabled for Autodesk quote', {
+                    quoteId: quoteRecord.id,
+                    autodeskQuoteNumber: autodeskQuoteNumber
+                });
+            }
 
         }
 
@@ -136,8 +154,12 @@ define(['N/record', 'N/runtime'],
                 const opportunityId = fullQuote.getValue({
                     fieldId: 'opportunity'
                 });
+
+                const quoteStatus = fullQuote.getValue({
+                    fieldId: 'custbody_hco_quote_status'
+                });
         
-                if (opportunityId) {
+                if (opportunityId && quoteStatus == 6) {
                     const oppRecord = record.load({
                         type: record.Type.OPPORTUNITY,
                         id: opportunityId
@@ -155,6 +177,8 @@ define(['N/record', 'N/runtime'],
         
                     oppRecord.save();
                     log.debug('Opportunity updated', `Set custbody_hco_hubspot_opp_total to ${totalAmount}`);
+                } else if (opportunityId) {
+                    log.debug('Opportunity update skipped', `Quote status ${quoteStatus} is not Completed.`);
                 } else {
                     log.debug('No opportunity linked to this quote.');
                 }

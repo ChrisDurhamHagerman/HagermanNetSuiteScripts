@@ -50,6 +50,21 @@ These fields are required on the NetSuite quote record:
 - `custbody_hco_prepared_by`
   - Employee field.
   - The employee email is used as `agentContact.email` in the Autodesk create quote request.
+- `custbody_hco_inside_sales_rep`
+  - Employee field.
+  - The employee email is added as an Autodesk quote additional recipient.
+- `custbody_hco_prim_contact_trans`
+  - Contact field.
+  - The contact email is added as an Autodesk quote additional recipient.
+- `custbody_hco_addl_email_1`
+  - Email field.
+  - Optional additional Autodesk quote recipient.
+- `custbody_hco_addl_email_2`
+  - Email field.
+  - Optional additional Autodesk quote recipient.
+- `custbody_hco_addl_email_3`
+  - Email field.
+  - Optional additional Autodesk quote recipient.
 - `custbody_hco_adesk_quote_status`
   - Used by the webhook to store Autodesk quote status.
 - `custbody_hco_adesk_quote_expires`
@@ -67,10 +82,18 @@ These are the main new parameters and values introduced for the renewal process.
   - Stores the Autodesk `transactionId` returned by `Create Quote v3`.
 - `custbody_hco_prepared_by`
   - Employee lookup used to derive `agentContact.email`.
+- `custbody_hco_inside_sales_rep`
+  - Employee lookup used to add the CSM / Inside Sales Rep as an additional recipient.
+- `custbody_hco_prim_contact_trans`
+  - Contact lookup used to add the Primary Contact as an additional recipient.
+- `custbody_hco_addl_email_1`
+  - Optional quote-level email field used to add an Autodesk quote additional recipient.
+- `custbody_hco_addl_email_2`
+  - Optional quote-level email field used to add an Autodesk quote additional recipient.
+- `custbody_hco_addl_email_3`
+  - Optional quote-level email field used to add an Autodesk quote additional recipient.
 - `custbody_hco_opportunity_id`
   - Recommended production field id for the Autodesk Opportunity ID entered by the user.
-- `custbody_hco_adesk_quote_recipients`
-  - Optional semicolon-separated email list if you decide to support extra quote recipients.
 
 ### Autodesk Create Quote Payload Parameters
 
@@ -86,6 +109,11 @@ These are the main new parameters and values introduced for the renewal process.
   - Partner CSN used in the Autodesk request.
 - `agentContact.email`
   - Now sourced from the NetSuite `Prepared By` employee email when available.
+- `additionalRecipients`
+  - Includes the NetSuite quote CSM / Inside Sales Rep employee email when available.
+  - Includes the NetSuite quote Primary Contact email when available.
+  - Includes the three optional quote-level additional email fields when available.
+  - Recipient emails are deduped against the Autodesk purchaser / quote contact and each other before enforcing the Autodesk maximum of 5 total recipients.
 
 ### Script Configuration Parameters
 
@@ -113,22 +141,15 @@ Important note:
   - `custbody_hco_opportunity_id`
 - If production uses the clean field id, `ng_ue_quote.js` must be updated before deployment.
 
-## Optional Opportunity Field
+## Optional Quote Email Fields
 
-If you want to support additional quote-recipient emails on the NetSuite Opportunity record, create:
+Additional quote-recipient emails are captured on the NetSuite quote record:
 
-- `custbody_hco_adesk_quote_recipients`
+- `custbody_hco_addl_email_1`
+- `custbody_hco_addl_email_2`
+- `custbody_hco_addl_email_3`
 
-Recommended format:
-
-- `Long Text`
-- semicolon-separated email list only
-- example:
-  - `user1@company.com;user2@company.com`
-
-Note:
-
-- As of this guide, this field is a design decision we discussed, but it should only be documented as production-required if you also deploy the matching payload code.
+The script dedupes these against the Autodesk purchaser / quote contact, the CSM / Inside Sales Rep, and the Primary Contact before creating the Autodesk quote.
 
 ## Production Autodesk Configuration
 
